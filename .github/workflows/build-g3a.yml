@@ -1,44 +1,26 @@
-name: Build Prizoop CG-100 g3a
+- name: Install deps
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y build-essential cmake git python3 curl pkg-config
 
-on:
-  workflow_dispatch:
-  push:
-    paths:
-      - "**/*.c"
-      - "**/*.cpp"
-      - "CMakeLists.txt"
-      - ".github/workflows/build-g3a.yml"
-      - "cmake/**"
+- name: Install GiteaPC
+  run: |
+    curl -fsSL https://git.planet-casio.com/Lephenixnoir/GiteaPC/raw/branch/master/install.sh -o /tmp/giteapc-install.sh
+    bash /tmp/giteapc-install.sh --user
+    echo "$HOME/.local/bin" >> $GITHUB_PATH   # giteapc installs here by default
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+- name: Install fxSDK & gint (via GiteaPC)
+  run: |
+    giteapc install Lephenixnoir/fxsdk
+    giteapc install Lephenixnoir/gint
 
-      - name: Install basic deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake git python3
+- name: Build (.g3a)
+  run: |
+    mkdir -p build
+    fxsdk build-fxcg --build-dir build
 
-      - name: Install GiteaPC, fxSDK, and gint
-        run: |
-          git clone https://git.planet-casio.com/Lephenixnoir/giteapc /opt/giteapc
-          chmod +x /opt/giteapc/giteapc
-          echo "/opt/giteapc" >> $GITHUB_PATH          # make 'giteapc' available
-          echo "$HOME/.local/bin" >> $GITHUB_PATH       # where 'fxsdk' is installed
-          /opt/giteapc/giteapc install Lephenixnoir/fxsdk
-          /opt/giteapc/giteapc install Lephenixnoir/gint
-
-      # Simpler than calling cmake directly: use the fxsdk wrapper
-      - name: Build (.g3a)
-        run: |
-          mkdir -p build
-          fxsdk build-fxcg --build-dir build
-
-      - name: Upload g3a artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: prizoop_cg100
-          path: build/*.g3a
+- name: Upload g3a artifact
+  uses: actions/upload-artifact@v4
+  with:
+    name: prizoop_cg100
+    path: build/*.g3a
