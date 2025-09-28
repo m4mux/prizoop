@@ -1,9 +1,8 @@
-name: Build g3a
+name: Build G3A
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
+  push:            # runs on any push to any branch
+  workflow_dispatch:  # lets you run it manually from Actions tab
 
 jobs:
   build:
@@ -11,37 +10,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build deps
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake git python3 pkg-config zlib1g-dev \
+            build-essential cmake git python3 pkg-config \
             libpng-dev libusb-1.0-0-dev libsdl2-dev libudisks2-dev \
-            libglib2.0-dev libgirepository1.0-dev
+            libglib2.0-dev libgirepository1.0-dev zlib1g-dev \
+            gcc-sh-elf binutils-sh-elf libnewlib-sh-elf-dev \
+            libmpfr-dev libmpc-dev libppl-dev
 
-      - name: Install fxsdk + gint (via giteapc)
+      - name: Get giteapc
+        run: git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
+
+      - name: Install fxsdk & gint
         run: |
-          set -euxo pipefail
-          git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
+          python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
+          python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
 
-      - name: Add fxsdk to PATH for subsequent steps
+      - name: Add fxsdk to PATH for later steps
         run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Sanity check toolchain
+      - name: Sanity check
         run: |
           fxsdk --version
-          fxlink --help | head -n 1
           sh-elf-gcc --version
 
-      - name: Build (fx-CG50)
-        run: |
-          cmake -B build-cg -S . -DCMAKE_TOOLCHAIN_FILE=$HOME/.local/lib/cmake/fxsdk/FXCG50.cmake
-          cmake --build build-cg -- -j"$(nproc)"
+      - name: Configure (FX-CG50)
+        run: cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=$HOME/.local/lib/cmake/fxsdk/FXCG50.cmake
+
+      - name: Build
+        run: cmake --build build -j2
+
+      - name: Locate g3a
+        id: locate
+        run: echo "file=$(find build -name '*.g3a' -print -quit)" >> "$GITHUB_OUTPUT"
 
       - name: Upload .g3a
+        if: steps.locate.outputs.file != ''
         uses: actions/upload-artifact@v4
         with:
           name: g3a
-          path: build-cg/*.g3a
+          path: ${{ steps.locate.outputs.file }}
