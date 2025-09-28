@@ -13,51 +13,95 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 150
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install build prerequisites
+      - name: Install build prerequisites (with apt retries)
         shell: bash
         run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake git python3 curl pkg-config \
-            gperf wget unzip bzip2 \
-            libpng-dev libusb-1.0-0-dev libudisks2-dev
-          pkg-config --modversion libpng16
-          pkg-config --modversion libusb-1.0
-          pkg-config --modversion udisks2
+          set -Eeuo pipefail
+          sudo apt-get update -o Acquire::Retries=5
+          sudo apt-get install -y -o Acquire::Retries=5 \
+            ca-certificates build-essential cmake git python3 curl pkg-config \
+            gperf wget unzip bzip2 libpng-dev libusb-1.0-0-dev
 
-      - name: Fetch GiteaPC (retry, then tarball fallback)
+      - name: Cache toolchains and GiteaPC installs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/giteapc
+            ~/.local/opt
+            ~/.cache/giteapc
+          key: gpc-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt','cmake/**') }}
+          restore-keys: |
+            gpc-${{ runner.os }}-
+
+      - name: Fetch GiteaPC robustly (installer → git clone → tarball) and ensure `giteapc` is callable
         shell: bash
         run: |
-          set -euxo pipefail
-          for i in 1 2 3; do
-            git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc && break || sleep 10
-          done || true
-          if [ ! -d /tmp/giteapc ]; then
-            curl -fL https://git.planet-casio.com/Lephenixnoir/GiteaPC/archive/master.tar.gz -o /tmp/giteapc.tgz
+          set -Eeuo pipefail
+
+          # 1) Try official installer (puts giteapc in ~/.local/bin)
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+            https://git.planet-casio.com/Lephenixnoir/GiteaPC/raw/branch/master/install.sh \
+            -o /tmp/gpc_install.sh || true
+          if [ -s /tmp/gpc_install.sh ]; then
+            bash /tmp/gpc_install.sh --user || true
+          fi
+
+          # 2) If not present, try cloning with retries
+          if ! command -v giteapc >/dev/null 2>&1; then
+            for i in 1 2 3 4 5; do
+              git clone --depth 1 --filter=blob:none --single-branch \
+                https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc && break || sleep 10
+            done || true
+          fi
+
+          # 3) If clone failed, fall back to tarball
+          if ! command -v giteapc >/dev/null 2>&1 && [ ! -d /tmp/giteapc ]; then
+            curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+              https://git.planet-casio.com/Lephenixnoir/GiteaPC/archive/master.tar.gz \
+              -o /tmp/giteapc.tgz
             mkdir -p /tmp/giteapc
             tar -xzf /tmp/giteapc.tgz -C /tmp/giteapc --strip-components=1
           fi
-          test -f /tmp/giteapc/giteapc.py
 
-      - name: Install sh-elf-gcc, fxSDK, and gint (non-interactive)
+          # 4) If still no `giteapc` in PATH, create a wrapper pointing to the local checkout
+          if ! command -v giteapc >/dev/null 2>&1; then
+            test -f /tmp/giteapc/giteapc.py
+            mkdir -p "$HOME/.local/bin"
+            printf '#!/usr/bin/env bash\nexec python3 %q "$@"\n' "/tmp/giteapc/giteapc.py" > "$HOME/.local/bin/giteapc"
+            chmod +x "$HOME/.local/bin/giteapc"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
+          # Sanity
+          giteapc --help || true
+
+      - name: Install sh-elf toolchain, fxSDK (no-udisks2), and gint (non-interactive)
         shell: bash
         run: |
-          set -euxo pipefail
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/sh-elf-gcc
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
+          set -Eeuo pipefail
+          # Build cross toolchain (may take time)
+          yes | giteapc install Lephenixnoir/sh-elf-gcc
+          # Install fxlibc (often required before libstdc++ finishes)
+          yes | giteapc install Vhex-Kernel-Core/fxlibc || true
+          # Re-run gcc to complete C++ libs if needed
+          yes | giteapc install Lephenixnoir/sh-elf-gcc || true
+          # Install fxSDK with udisks2 disabled to avoid GLib deps
+          yes | giteapc install Lephenixnoir/fxsdk:noudisks2
+          # Install gint
+          yes | giteapc install Lephenixnoir/gint
+          # Sanity
           "$HOME/.local/bin/fxsdk" --help
 
       - name: Build (.g3a)
         shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
           mkdir -p build
           "$HOME/.local/bin/fxsdk" build-fxcg --build-dir build
           ls -lh build/*.g3a
