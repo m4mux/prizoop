@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install deps
+      - name: Install basic deps
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake git python3
@@ -25,20 +25,17 @@ jobs:
       - name: Install GiteaPC, fxSDK, and gint
         run: |
           git clone https://git.planet-casio.com/Lephenixnoir/giteapc /opt/giteapc
-          echo 'export PATH=/opt/giteapc:$PATH' >> $GITHUB_ENV
-          source $GITHUB_ENV
-          giteapc install Lephenixnoir/fxsdk
-          giteapc install Lephenixnoir/gint
+          chmod +x /opt/giteapc/giteapc
+          echo "/opt/giteapc" >> $GITHUB_PATH          # make 'giteapc' available
+          echo "$HOME/.local/bin" >> $GITHUB_PATH       # where 'fxsdk' is installed
+          /opt/giteapc/giteapc install Lephenixnoir/fxsdk
+          /opt/giteapc/giteapc install Lephenixnoir/gint
 
-      - name: Configure (fxcg target)
+      # Simpler than calling cmake directly: use the fxsdk wrapper
+      - name: Build (.g3a)
         run: |
-          mkdir build && cd build
-          cmake -DCMAKE_TOOLCHAIN_FILE=$FXSDK/cmake/toolchain.cmake -DFXSDK_PLATFORM=fxcg ..
-
-      - name: Build
-        run: |
-          cd build
-          make -j
+          mkdir -p build
+          fxsdk build-fxcg --build-dir build
 
       - name: Upload g3a artifact
         uses: actions/upload-artifact@v4
