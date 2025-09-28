@@ -1,0 +1,47 @@
+name: Build Prizoop CG-100 g3a
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "**/*.c"
+      - "**/*.cpp"
+      - "CMakeLists.txt"
+      - ".github/workflows/build-g3a.yml"
+      - "cmake/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git python3
+
+      - name: Install GiteaPC, fxSDK, and gint
+        run: |
+          git clone https://git.planet-casio.com/Lephenixnoir/giteapc /opt/giteapc
+          echo 'export PATH=/opt/giteapc:$PATH' >> $GITHUB_ENV
+          source $GITHUB_ENV
+          giteapc install Lephenixnoir/fxsdk
+          giteapc install Lephenixnoir/gint
+
+      - name: Configure (fxcg target)
+        run: |
+          mkdir build && cd build
+          cmake -DCMAKE_TOOLCHAIN_FILE=$FXSDK/cmake/toolchain.cmake -DFXSDK_PLATFORM=fxcg ..
+
+      - name: Build
+        run: |
+          cd build
+          make -j
+
+      - name: Upload g3a artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prizoop_cg100
+          path: build/*.g3a
