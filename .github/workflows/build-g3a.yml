@@ -13,58 +13,43 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install host dependencies (apt)
-        shell: bash
+      - name: Install system dependencies
         run: |
           set -euxo pipefail
           sudo apt-get update
-          # Core build + pkg-config
-          sudo apt-get install -y build-essential cmake pkg-config git python3 python3-pip
-          # fxSDK deps discovered by CMake (png, usb, udisks2 -> glib/gio/gobject)
-          sudo apt-get install -y libpng-dev libusb-1.0-0-dev libudisks2-dev libglib2.0-dev libgirepository1.0-dev
-          # Optional but helpful
-          sudo apt-get install -y libudev-dev
-          # SuperH cross toolchain from Ubuntu (avoid building sh-elf-gcc ourselves)
-          sudo apt-get install -y gcc-sh-elf binutils-sh-elf
-          # Quick sanity checks (fail early if something’s missing)
-          pkg-config --modversion libpng16
-          pkg-config --modversion libusb-1.0
-          pkg-config --modversion udisks2
-          pkg-config --modversion gio-2.0
-          pkg-config --modversion gobject-2.0
-          pkg-config --modversion glib-2.0
-          sh-elf-gcc --version
+          sudo apt-get install -y \
+            build-essential cmake git python3 pkg-config \
+            libpng-dev libusb-1.0-0-dev libsdl2-dev \
+            libudisks2-dev libglib2.0-dev libgirepository1.0-dev \
+            zlib1g-dev \
+            gcc-sh-elf binutils-sh-elf
+          # Make sure local user bin is on PATH for tools fxSDK installs
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Fetch GiteaPC
-        shell: bash
         run: |
           set -euxo pipefail
-          git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
+          git clone https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
 
-      - name: Install fxSDK and gint (non-interactive)
-        shell: bash
+      - name: Install toolchain and SDKs with GiteaPC (non-interactive)
         run: |
           set -euxo pipefail
-          # Ensure $HOME/.local/bin ends up on PATH for later steps
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          # Auto-confirm prompts from giteapc
+          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/sh-elf-gcc
           yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
           yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
-          # Verify tools are installed
-          fxsdk --help >/dev/null
-          fxconv --help >/dev/null || true
+          "$HOME/.local/bin/fxsdk" --version || true
+          "$HOME/.local/bin/fxsdk" --help    || true
 
-      - name: Build (.g3a) with fxSDK
-        shell: bash
+      - name: Build (.g3a)
         run: |
           set -euxo pipefail
           mkdir -p build
-          # Build for fx-CG (Prizm) using the fxSDK wrapper
           fxsdk build-fxcg --build-dir build
 
       - name: Upload g3a artifact
