@@ -22,25 +22,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake git python3 curl pkg-config \
-            gperf bison flex texinfo libgmp-dev libmpfr-dev libmpc-dev \
-            wget unzip bzip2
+            gperf wget unzip bzip2
 
-      # Install GiteaPC by cloning; call it explicitly via python3 (no PATH reliance)
-      - name: Fetch GiteaPC
+      - name: Fetch GiteaPC (retry + tarball fallback)
         run: |
-          git clone https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
-          test -f /tmp/giteapc/giteapc
+          set -euxo pipefail
+          for i in 1 2 3; do
+            git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc && break || sleep 10
+          done || true
+          if [ ! -d /tmp/giteapc ]; then
+            curl -fL https://git.planet-casio.com/Lephenixnoir/GiteaPC/archive/master.tar.gz -o /tmp/giteapc.tgz
+            mkdir -p /tmp/giteapc
+            tar -xzf /tmp/giteapc.tgz -C /tmp/giteapc --strip-components=1
+          fi
+          test -f /tmp/giteapc/giteapc.py
 
       - name: Install fxSDK & gint (via GiteaPC)
         run: |
-          python3 /tmp/giteapc/giteapc install Lephenixnoir/fxsdk
-          python3 /tmp/giteapc/giteapc install Lephenixnoir/gint
-          # Verify fxSDK CLI was installed to ~/.local/bin
-          ls -al "$HOME/.local/bin"
+          set -euxo pipefail
+          python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
+          python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
           "$HOME/.local/bin/fxsdk" --help
 
       - name: Build (.g3a)
         run: |
+          set -euxo pipefail
           mkdir -p build
           "$HOME/.local/bin/fxsdk" build-fxcg --build-dir build
           ls -lh build/*.g3a
