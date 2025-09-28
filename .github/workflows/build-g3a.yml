@@ -17,33 +17,33 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install basic deps
+      - name: Install build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake git python3 curl pkg-config gperf wget unzip bzip2
+          sudo apt-get install -y \
+            build-essential cmake git python3 curl pkg-config \
+            gperf bison flex texinfo libgmp-dev libmpfr-dev libmpc-dev \
+            wget unzip bzip2
 
-      # Install GiteaPC to ~/.local/bin non-interactively
-      - name: Install GiteaPC
+      # Install GiteaPC by cloning; call it explicitly via python3 (no PATH reliance)
+      - name: Fetch GiteaPC
         run: |
-          curl -fsSL https://git.planet-casio.com/Lephenixnoir/GiteaPC/raw/branch/master/install.sh -o /tmp/giteapc-install.sh
-          bash /tmp/giteapc-install.sh --user
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          # sanity checks
-          ls -al "$HOME/.local/bin" || true
-          "$HOME/.local/bin/giteapc" --help || true
+          git clone https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
+          test -f /tmp/giteapc/giteapc
 
       - name: Install fxSDK & gint (via GiteaPC)
         run: |
-          "$HOME/.local/bin/giteapc" install Lephenixnoir/fxsdk
-          "$HOME/.local/bin/giteapc" install Lephenixnoir/gint
-          # ensure fxsdk is on PATH for subsequent steps
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          "$HOME/.local/bin/fxsdk" --help || true
+          python3 /tmp/giteapc/giteapc install Lephenixnoir/fxsdk
+          python3 /tmp/giteapc/giteapc install Lephenixnoir/gint
+          # Verify fxSDK CLI was installed to ~/.local/bin
+          ls -al "$HOME/.local/bin"
+          "$HOME/.local/bin/fxsdk" --help
 
       - name: Build (.g3a)
         run: |
           mkdir -p build
           "$HOME/.local/bin/fxsdk" build-fxcg --build-dir build
+          ls -lh build/*.g3a
 
       - name: Upload g3a artifact
         uses: actions/upload-artifact@v4
