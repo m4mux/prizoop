@@ -1,6 +1,47 @@
-# Make sure your local bin is first
-export PATH="$HOME/.local/bin:$PATH"
+name: Build g3a
 
-fxsdk --version
-fxlink --help
-sh-elf-gcc --version       # will show 13.2.0 until the new toolchain is finished; then 14.1.0
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake git python3 pkg-config zlib1g-dev \
+            libpng-dev libusb-1.0-0-dev libsdl2-dev libudisks2-dev \
+            libglib2.0-dev libgirepository1.0-dev
+
+      - name: Install fxsdk + gint (via giteapc)
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
+          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
+          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
+
+      - name: Add fxsdk to PATH for subsequent steps
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Sanity check toolchain
+        run: |
+          fxsdk --version
+          fxlink --help | head -n 1
+          sh-elf-gcc --version
+
+      - name: Build (fx-CG50)
+        run: |
+          cmake -B build-cg -S . -DCMAKE_TOOLCHAIN_FILE=$HOME/.local/lib/cmake/fxsdk/FXCG50.cmake
+          cmake --build build-cg -- -j"$(nproc)"
+
+      - name: Upload .g3a
+        uses: actions/upload-artifact@v4
+        with:
+          name: g3a
+          path: build-cg/*.g3a
