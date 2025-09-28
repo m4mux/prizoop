@@ -13,44 +13,50 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
       DEBIAN_FRONTEND: noninteractive
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Install system deps (no interactive prompts)
+        shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake git python3 pkg-config \
             libpng-dev libusb-1.0-0-dev libsdl2-dev \
-            libudisks2-dev libglib2.0-dev libgirepository1.0-dev \
-            zlib1g-dev \
-            gcc-sh-elf binutils-sh-elf
-          # Make sure local user bin is on PATH for tools fxSDK installs
+            libudisks2-dev libglib2.0-dev libgirepository1.0-dev zlib1g-dev \
+            gcc-sh-elf binutils-sh-elf libnewlib-sh-elf-dev \
+            libmpfr-dev libmpc-dev libppl-dev
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sh-elf-gcc --version
 
       - name: Fetch GiteaPC
+        shell: bash
         run: |
           set -euxo pipefail
-          git clone https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
+          git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
+          test -f /tmp/giteapc/giteapc.py
 
-      - name: Install toolchain and SDKs with GiteaPC (non-interactive)
+      - name: Install fxSDK and gint (non-interactive; no pipes)
+        shell: bash
         run: |
           set -euxo pipefail
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/sh-elf-gcc
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
-          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
-          "$HOME/.local/bin/fxsdk" --version || true
-          "$HOME/.local/bin/fxsdk" --help    || true
+          python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk <<< "y"
+          python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint  <<< "y"
+          fxsdk --help >/dev/null
 
       - name: Build (.g3a)
+        shell: bash
         run: |
           set -euxo pipefail
           mkdir -p build
           fxsdk build-fxcg --build-dir build
+          ls -lh build/*.g3a
 
       - name: Upload g3a artifact
         uses: actions/upload-artifact@v4
