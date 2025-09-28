@@ -13,110 +13,59 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build prerequisites (with apt retries)
+      - name: Install host dependencies (apt)
         shell: bash
         run: |
-          set -Eeuo pipefail
-          sudo apt-get update -o Acquire::Retries=5
-          sudo apt-get install -y -o Acquire::Retries=5 \
-            ca-certificates build-essential cmake git python3 curl pkg-config \
-            gperf wget unzip bzip2 libpng-dev libusb-1.0-0-dev
+          set -euxo pipefail
+          sudo apt-get update
+          # Core build + pkg-config
+          sudo apt-get install -y build-essential cmake pkg-config git python3 python3-pip
+          # fxSDK deps discovered by CMake (png, usb, udisks2 -> glib/gio/gobject)
+          sudo apt-get install -y libpng-dev libusb-1.0-0-dev libudisks2-dev libglib2.0-dev libgirepository1.0-dev
+          # Optional but helpful
+          sudo apt-get install -y libudev-dev
+          # SuperH cross toolchain from Ubuntu (avoid building sh-elf-gcc ourselves)
+          sudo apt-get install -y gcc-sh-elf binutils-sh-elf
+          # Quick sanity checks (fail early if something’s missing)
+          pkg-config --modversion libpng16
+          pkg-config --modversion libusb-1.0
+          pkg-config --modversion udisks2
+          pkg-config --modversion gio-2.0
+          pkg-config --modversion gobject-2.0
+          pkg-config --modversion glib-2.0
+          sh-elf-gcc --version
 
-      - name: Cache toolchains and installs
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/giteapc
-            ~/.local/opt
-            ~/.cache/giteapc
-          key: gpc-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt','cmake/**') }}
-          restore-keys: |
-            gpc-${{ runner.os }}-
-
-      - name: Fetch GiteaPC robustly (installer → clone → tarball), ensure `giteapc`
+      - name: Fetch GiteaPC
         shell: bash
         run: |
-          set -Eeuo pipefail
-          # 1) Installer
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
-            https://git.planet-casio.com/Lephenixnoir/GiteaPC/raw/branch/master/install.sh \
-            -o /tmp/gpc_install.sh || true
-          if [ -s /tmp/gpc_install.sh ]; then bash /tmp/gpc_install.sh --user || true; fi
+          set -euxo pipefail
+          git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc
 
-          # 2) Clone (retries)
-          if ! command -v giteapc >/dev/null 2>&1; then
-            for i in 1 2 3 4 5; do
-              git clone --depth 1 --filter=blob:none --single-branch \
-                https://git.planet-casio.com/Lephenixnoir/giteapc /tmp/giteapc && break || sleep 10
-            done || true
-          fi
-
-          # 3) Tarball fallback
-          if ! command -v giteapc >/dev/null 2>&1 && [ ! -d /tmp/giteapc ]; then
-            curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
-              https://git.planet-casio.com/Lephenixnoir/GiteaPC/archive/master.tar.gz \
-              -o /tmp/giteapc.tgz
-            mkdir -p /tmp/giteapc
-            tar -xzf /tmp/giteapc.tgz -C /tmp/giteapc --strip-components=1
-          fi
-
-          # Wrapper if still not on PATH
-          if ! command -v giteapc >/dev/null 2>&1; then
-            test -f /tmp/giteapc/giteapc.py
-            mkdir -p "$HOME/.local/bin"
-            printf '#!/usr/bin/env bash\nexec python3 %q "$@"\n' "/tmp/giteapc/giteapc.py" > "$HOME/.local/bin/giteapc"
-            chmod +x "$HOME/.local/bin/giteapc"
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          fi
-
-          giteapc --help || true
-
-      - name: Install sh-elf cross toolchain (non-interactive)
+      - name: Install fxSDK and gint (non-interactive)
         shell: bash
         run: |
-          set -Eeuo pipefail
-          yes | giteapc install Lephenixnoir/sh-elf-gcc
+          set -euxo pipefail
+          # Ensure $HOME/.local/bin ends up on PATH for later steps
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # Auto-confirm prompts from giteapc
+          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/fxsdk
+          yes | python3 /tmp/giteapc/giteapc.py install Lephenixnoir/gint
+          # Verify tools are installed
+          fxsdk --help >/dev/null
+          fxconv --help >/dev/null || true
 
-      - name: Build & install fxSDK from GitHub mirror (UDisks2 disabled)
+      - name: Build (.g3a) with fxSDK
         shell: bash
         run: |
-          set -Eeuo pipefail
-          git clone --depth 1 https://github.com/Insoft-UK/fxSDK /tmp/fxsdk
-          cmake -S /tmp/fxsdk -B /tmp/fxsdk-build \
-            -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-            -DFXLINK_DISABLE_UDISKS2=1
-          cmake --build /tmp/fxsdk-build -j
-          cmake --install /tmp/fxsdk-build
-          "$HOME/.local/bin/fxsdk" --help
-
-      - name: Build & install gint (GitHub fallback if forge fails)
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          for i in 1 2 3; do
-            git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/gint /tmp/gint && break || sleep 10
-          done || true
-          if [ ! -d /tmp/gint ]; then
-            git clone --depth 1 https://github.com/Insoft-UK/gint /tmp/gint
-          fi
-          cmake -S /tmp/gint -B /tmp/gint-build \
-            -DCMAKE_INSTALL_PREFIX="$HOME/.local"
-          cmake --build /tmp/gint-build -j
-          cmake --install /tmp/gint-build
-
-      - name: Build (.g3a)
-        shell: bash
-        run: |
-          set -Eeuo pipefail
+          set -euxo pipefail
           mkdir -p build
-          "$HOME/.local/bin/fxsdk" build-fxcg --build-dir build
-          ls -lh build/*.g3a
+          # Build for fx-CG (Prizm) using the fxSDK wrapper
+          fxsdk build-fxcg --build-dir build
 
       - name: Upload g3a artifact
         uses: actions/upload-artifact@v4
