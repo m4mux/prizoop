@@ -28,7 +28,7 @@ jobs:
             ca-certificates build-essential cmake git python3 curl pkg-config \
             gperf wget unzip bzip2 libpng-dev libusb-1.0-0-dev
 
-      - name: Cache toolchains and GiteaPC installs
+      - name: Cache toolchains and installs
         uses: actions/cache@v4
         with:
           path: |
@@ -39,20 +39,17 @@ jobs:
           restore-keys: |
             gpc-${{ runner.os }}-
 
-      - name: Fetch GiteaPC robustly (installer → git clone → tarball) and ensure `giteapc` is callable
+      - name: Fetch GiteaPC robustly (installer → clone → tarball), ensure `giteapc`
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          # 1) Try official installer (puts giteapc in ~/.local/bin)
+          # 1) Installer
           curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
             https://git.planet-casio.com/Lephenixnoir/GiteaPC/raw/branch/master/install.sh \
             -o /tmp/gpc_install.sh || true
-          if [ -s /tmp/gpc_install.sh ]; then
-            bash /tmp/gpc_install.sh --user || true
-          fi
+          if [ -s /tmp/gpc_install.sh ]; then bash /tmp/gpc_install.sh --user || true; fi
 
-          # 2) If not present, try cloning with retries
+          # 2) Clone (retries)
           if ! command -v giteapc >/dev/null 2>&1; then
             for i in 1 2 3 4 5; do
               git clone --depth 1 --filter=blob:none --single-branch \
@@ -60,7 +57,7 @@ jobs:
             done || true
           fi
 
-          # 3) If clone failed, fall back to tarball
+          # 3) Tarball fallback
           if ! command -v giteapc >/dev/null 2>&1 && [ ! -d /tmp/giteapc ]; then
             curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
               https://git.planet-casio.com/Lephenixnoir/GiteaPC/archive/master.tar.gz \
@@ -69,7 +66,7 @@ jobs:
             tar -xzf /tmp/giteapc.tgz -C /tmp/giteapc --strip-components=1
           fi
 
-          # 4) If still no `giteapc` in PATH, create a wrapper pointing to the local checkout
+          # Wrapper if still not on PATH
           if ! command -v giteapc >/dev/null 2>&1; then
             test -f /tmp/giteapc/giteapc.py
             mkdir -p "$HOME/.local/bin"
@@ -78,25 +75,40 @@ jobs:
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
 
-          # Sanity
           giteapc --help || true
 
-      - name: Install sh-elf toolchain, fxSDK (no-udisks2), and gint (non-interactive)
+      - name: Install sh-elf cross toolchain (non-interactive)
         shell: bash
         run: |
           set -Eeuo pipefail
-          # Build cross toolchain (may take time)
           yes | giteapc install Lephenixnoir/sh-elf-gcc
-          # Install fxlibc (often required before libstdc++ finishes)
-          yes | giteapc install Vhex-Kernel-Core/fxlibc || true
-          # Re-run gcc to complete C++ libs if needed
-          yes | giteapc install Lephenixnoir/sh-elf-gcc || true
-          # Install fxSDK with udisks2 disabled to avoid GLib deps
-          yes | giteapc install Lephenixnoir/fxsdk:noudisks2
-          # Install gint
-          yes | giteapc install Lephenixnoir/gint
-          # Sanity
+
+      - name: Build & install fxSDK from GitHub mirror (UDisks2 disabled)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --depth 1 https://github.com/Insoft-UK/fxSDK /tmp/fxsdk
+          cmake -S /tmp/fxsdk -B /tmp/fxsdk-build \
+            -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+            -DFXLINK_DISABLE_UDISKS2=1
+          cmake --build /tmp/fxsdk-build -j
+          cmake --install /tmp/fxsdk-build
           "$HOME/.local/bin/fxsdk" --help
+
+      - name: Build & install gint (GitHub fallback if forge fails)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for i in 1 2 3; do
+            git clone --depth 1 https://git.planet-casio.com/Lephenixnoir/gint /tmp/gint && break || sleep 10
+          done || true
+          if [ ! -d /tmp/gint ]; then
+            git clone --depth 1 https://github.com/Insoft-UK/gint /tmp/gint
+          fi
+          cmake -S /tmp/gint -B /tmp/gint-build \
+            -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+          cmake --build /tmp/gint-build -j
+          cmake --install /tmp/gint-build
 
       - name: Build (.g3a)
         shell: bash
